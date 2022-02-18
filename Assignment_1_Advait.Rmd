@@ -1,0 +1,289 @@
+---
+title: 'Assignment 1: Data set selection and initial Processing'
+author: "Advait Sridhar"
+date: "February 15th, 2022"
+output:
+  html_document:
+    df_print: paged
+---
+
+__Brief Introduction__: The dataset of interest is GSE173940 and can be found here: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE173940. It was found through the NCBI Gene Expression Omnibus (GEO) and involves the investigation of ATM checkpoint kinase loss on cerebral protein aggregation. The researchers used 2 cell lines with 3 treatments and one control population in each group and investigated expression of ATM and relevant topoisomerase and checkpoint kinase genes as a result. I will be investigating the statistical quality of the data using the Bioconductor package in R. 
+
+
+```{r}
+#Setting Working Directory
+setwd("/home/rstudio/projects")
+getwd()
+```
+
+```{r}
+#Installing and Loading Required Packages
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+if (!requireNamespace("GEOquery", quietly = TRUE))
+    BiocManager::install("GEOquery")
+if (!requireNamespace("GEOmetadb", quietly = TRUE))
+    BiocManager::install("GEOmetadb")
+if (!require("edgeR", quietly = TRUE))
+    BiocManager::install("edgeR")
+if (!requireNamespace("biomaRt", quietly = TRUE))
+    BiocManager::install("biomaRt")
+if (!requireNamespace("tidyverse", quietly = TRUE))
+    install.packages("tidyverse")
+if (!requireNamespace("knitr", quietly = TRUE))
+    install.packages("knitr")
+
+
+library(BiocManager)
+library(GEOquery)
+library(GEOmetadb)
+library(tidyverse)
+library(knitr)
+library(edgeR)
+library(biomaRt)
+
+```
+
+__1 - Download the data__
+
+Data was downloaded using GEOquery package. Rownames correspond to the ensembl ids in the downloaded file, and the read.delim() function was used to write it into a data frame.
+
+```{r}
+#Downloading the Data
+data_file <- getGEOSuppFiles('GSE173940')
+gene_names <- rownames(data_file)
+
+#Reading ensembl ids and expression data into data frame
+atm_exp <- read.delim(gene_names[1], header=TRUE, check.names = FALSE)
+```
+
+__2 - Assess__
+
+The size of the dataset was investigated using dim()
+
+```{r}
+#Finding number of rows and columns in the dataset
+dim(atm_exp)
+```
+
+Seeing that there are 33 columns, I proceeded to investigate column names to see if control and treatment groups could be parsed from them.
+
+```{r}
+#Looking at column names
+colnames(atm_exp)
+```
+
+Seeing as the column names were generic and not organized in any particular order, I found the corresponding groups and their treatment for each sample through the GEO website and created two vectors to represent this. I compiled the vectors into a dataframe called "samples" for later analysis.
+
+```{r}
+#creating list of treatments that weren't included in original data
+treatment <- c("WT", "Camptothecin", "DMSO", "Camptothecin", "DMSO", "Camptothecin", "DMSO", "Camptothecin", "ATM-KO", "WT", "ATM-KO", "WT", "ATM-KO", "WT", "ATM-KO", "DMSO", "ATM-KO", "ATM-KO", "ATM-KO", "ATM-KO", "DMSO", "DMSO", "DMSO", "DMSO", "Camptothecin", "Camptothecin", "Camptothecin", "Camptothecin", "DMSO", "DMSO", "DMSO", "DMSO")
+
+#creating list of cell lines used for experimentation
+cell_line <- c("U2OS", "HEK293T", "HEK293T", "HEK293T", "HEK293T", "HEK293T", "HEK293T", "HEK293T", "U2OS", "U2OS", "U2OS", "U2OS", "U2OS", "U2OS", "U2OS", "HEK293T", "HEK293T", "HEK293T", "HEK293T", "HEK293T", "HEK293T", "HEK293T", "HEK293T", "HEK293T", "U2OS", "U2OS", "U2OS", "U2OS", "U2OS", "U2OS", "U2OS", "U2OS")
+
+#compiling cell lines and treatment information into a data frame
+samples <- data.frame(cell_line, treatment)
+kable(table(samples$treatment[1:3]), format = "html")
+```
+
+__3 - Map__
+
+The most important step involved mapping the ensemble ids into their respective HUGO symbols. I was able to do this using biomaRt package and submitting a query using attributes "ensembl_gene_id" and "hgnc_symbol" to retrieve the relevant symbols. The list of genes was then merged into the original dataset and the columns were ordered alphanumerically as they had been mixed up when initially downloaded.
+
+```{r}
+#renaming first column prior to mapping
+colnames(atm_exp)[1] <- "ensembl_id"
+
+#ensuring configuration works prior to submitting query
+httr::set_config(httr::config(ssl_verifypeer = FALSE))
+
+#defining ensembl variable to pull values from dataset
+ensembl <- useMart("ensembl")
+ensembl <- useDataset("hsapiens_gene_ensembl", mart=ensembl)
+
+#querying biomaRt to get HUGO gene symbols for ensembl ids
+genes <- atm_exp$ensembl_id
+gene_list <- getBM(filters = "ensembl_gene_id", attributes = c("ensembl_gene_id", "hgnc_symbol"), values = genes, mart = ensembl)
+
+#merging to original dataset
+atm_exp <- merge(atm_exp,gene_list,by.x="ensembl_id",by.y="ensembl_gene_id")
+
+#order alphanumerically 
+atm_exp <- atm_exp[,str_sort(names(atm_exp), numeric = TRUE)]
+kable(table(atm_exp$hgnc_symbol[1:10]), format = "html")
+```
+
+__3 - Clean__
+
+After creating our sorted dataset with HUGO symbols, we need to get rid of irrelevant data prior to normalization. I started by getting rid of the last 5 rows, which had data involving numbers of replicates that weren't assigned to any samples and random noise that researchers couldn't assign to any one gene id. The data was then sorted in descending order. Seeing that none of the identifiers mapped to more than 1 gene, there was no need for further cleaning for this part.
+
+```{r}
+#omitting irrelevant rows
+atm_exp <- atm_exp[-c(60200:60204), ]
+
+#sorting by gene counts (none exceed 1)
+atm_gene_counts <- sort(table(atm_exp$ensembl_id), decreasing = TRUE)
+kable(table(atm_exp$hgnc_symbol)[1:10], format="html")
+
+```
+
+Even though I didn't have to address multiple mappings, it was important to filter out replicates that had very low counts per million (<10) across all samples. To do this, I had to convert values into counts per million using cpm() and then assign these counts to their respective gene ids. Using rowSums, I kept only those genes that had >= 10 cpm and filtered out the rest. Then I calculated the difference between the number of genes to that of the filtered dataset
+
+```{r}
+#convert to counts per million
+cpms <- cpm(atm_exp[,3:34])
+rownames(cpms) <- atm_exp[,2]
+
+#removing low counts in each row to create filtered dataset
+keep <- rowSums(cpms >1) >=10
+atm_exp_filtered <- atm_exp[keep,]
+
+#finding number of deleted rows
+kable(length(rownames(atm_exp)) - length(rownames(atm_exp_filtered)), format = "html")
+```
+
+__Normalization__
+
+As seen above, there was an immense number of genes that were removed as a result of filtering out low counts. Now, we need to normalize the data to account for variation and quality of what I will be working with. To see the spread of the data, I created a boxplot using expression values to ensure median and end values were comparable. I didn't include outliers since there seemed to be many of them in all samples, which I checked by removing the outline = FALSE argument and it didn't seem to make much of a difference to the overall distribution of median and end points for all samples. 
+
+```{r}
+#creating a boxplot to visualize data without outliers
+atm_boxplot <- log2(cpm(atm_exp_filtered[,3:34]))
+
+boxplot(atm_boxplot, xlab = "Samples", ylab = "log2 CPM", 
+        las = 2, cex = 0.5, cex.lab = 1,
+        cex.axis = 0.5, main = "ATM RNASeq Samples", outline = FALSE)
+
+#median of the data
+abline(h = median(apply(atm_boxplot, 2, median)), 
+       col = "red", lwd = 2, lty = "dashed")
+```
+
+By naked eye, I could see that the median value of gene cpm of each sample didn't vary greatly from the median of the whole sample or each other. To further confirm this, I constructed a density plot to ensure that the data was normally distributed.  
+
+```{r}
+#creating a density plot
+atm_counts_density <- apply(log2(cpm(atm_exp_filtered[,3:34])), 2, density)
+
+#calculate the limit for each sample
+xlim <- 0 
+ylim <- 0
+
+#using a for loop to iterate through expression values for each sample as a log2 of its gene cpm
+for (i in 1:length(atm_counts_density)) {
+  xlim <- range(c(xlim, atm_counts_density[[i]]$x)) 
+  ylim <- range(c(ylim, atm_counts_density[[i]]$y))
+    }
+
+#indicating color and line type
+cols <- rainbow(length(atm_counts_density))
+ltys <- rep(1, length(atm_counts_density))
+
+#initial density plot
+plot(atm_counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
+     ylab="Smoothing density of log2-CPM",
+     main="", cex.lab = 1.0)
+    
+#full plot
+for (i in 1:length(atm_counts_density)) 
+  lines(atm_counts_density[[i]], col=cols[i], lty=ltys[i])
+
+#legend
+legend("right", colnames(atm_boxplot),
+       col=cols, lty=ltys, cex=0.48,
+       border ="red",  text.col = "green",
+       merge = TRUE, bg = "black")
+```
+
+The distribution appears slightly skewed right with some noise at lower counts, but overall appears suitable for analysis. We can confirm this even further through creating normalization factors for our data and plotting them in various ways using Trimmed Means of M-values (TMM). To get normalization counts, I first created a matrix containing count data from our filtered dataset, then used the DGEList command from the edgeR package and grouped these counts according to their respective treatment in each sample. This allows us to create an object than can be used in an MDS plot to inspect sample separation, which is what I did next.  
+
+```{r}
+#inputting ordered sample names into samples dataframe
+rownames(samples) <- colnames(atm_exp[,3:34])
+
+#creating an edgeR container for count data
+filtered_data_matrix <- as.matrix(atm_exp_filtered[,3:34])
+rownames(filtered_data_matrix) <- atm_exp_filtered$hgnc_symbol
+d = DGEList(counts=filtered_data_matrix, group=samples$treatment)
+
+#calculating normalization factors
+d = calcNormFactors(d)
+
+#getting the normalized data
+normalized_counts <- cpm(d)
+
+#creating an MDS plot 
+plotMDS(d, labels=rownames(samples),
+  col = c("red", "blue", "green", "black")[factor(samples$treatment)])
+```
+
+Through this plot, we can see which samples cluster together and which ones don't. The degree of sample separation here appears to be quite high, which warrants further investigation. We can also use our DGEList object to create a BCV plot, which calculates dispersion and allows us to see how much our variance deviates from the mean of the sample data. I specifically compared the variables  of interest to the researchers, which was the 2 cell lines and their 4 treatments (including a control), and plotted common and tagwise dispersio as a result. 
+
+```{r}
+#estimate common and tagwise dispersion between cell line and treatment used
+model_design <- model.matrix(~samples$cell_line + samples$treatment+0)
+d <- estimateDisp(d, model_design)
+
+#Creating BCV plot to investigate dispersion
+plotBCV(d)
+```
+
+The BCV plot shows that at higher log cpm there seems to be less difference between mean and variance, but it is exacerbated at lower values.To investigate this further, I created a mean-variance plot to highlight correlation between mean and variance for both tagwise and common dispersion data using the plotMeanVar() function with the DGEList object as an argument and displaying all relationships.  
+
+```{r}
+#Investigating relationship between mean and variance of expression data
+plotMeanVar(d, show.raw.vars = TRUE, show.tagwise.vars=TRUE, NBline=TRUE, 
+            show.ave.raw.vars = TRUE,show.binned.common.disp.vars = TRUE)
+```
+
+The plot shows a much more promising correlation between mean and variance of the sample data, although it is hard to tell for sure due to the immense amount of data points and lack of taking into account its variance from the best fit line. The raw variation and tagwise dispersion fall into a similar pattern, as does the average variation and common dispersion. All these factors indicate that the data has been normalized to the point where it is suitable for further analysis. 
+
+__Interpret & Document__
+
+__What are the control and test conditions of the dataset?__
+
+The control condition of this dataset is the WT treatment for the U2OS cells. The test conditions are the Camptothecin, DMSO, and ATM-knockout treatments for both cell lines.
+
+__Why is the dataset of interest to you?__
+
+I have a deep interest in protein aggregation in specific, and cancer genetics in general. The knockout of ATM kinase and the introduction of genotoxic elements may have large influence in protein aggregation especially with age, and so I was deeply interested in the gene expression results of these conditions on human cells.
+
+__Were there expression values that were not unique for specific genes? How did you handle these?__
+
+I did not find such expression values in my dataset.
+
+__Were there expression values that could not be mapped to current HUGO symbols?__
+
+I did not find such expression values in my dataset.
+
+__How many outliers were removed?__
+
+Outliers weren't removed as part of the dataset, although they were hidden while creating the boxplot. 
+
+__How did you handle replicates?__
+
+Biological replicates in this dataset involved two cell lines taken from 32 samples and treated with 4 treatments. I treated the cell lines as groups, with each having one of 4 possible treatments (including a control) and this whole process being repeated 4 times for a total of 32 outcomes.
+
+__What is the final coverage of your dataset?__
+
+The total coverage of the dataset was the number of counts in the filtered file/number of counts in the original dataset which was 15858/56210 = __28.2%__
+
+
+__FINAL PRODUCT: MAPPING HUGO SYMBOLS TO ENSEMBL GENE IDENTIFIERS__
+
+```{r}
+#Making rownames HUGO symbols
+rownames(atm_exp_filtered) <- make.names(atm_exp_filtered$hgnc_symbol, unique = TRUE)
+
+#Removing ensembl_id and hgnc_symbol columns
+atm_exp_filtered <- atm_exp_filtered[,-1:-2]
+
+#Writing data to local file
+write.csv(atm_exp_filtered,"atm_exp_filtered.csv", row.names = TRUE)
+
+#Displaying final dataset
+result <- atm_exp_filtered
+kable(head(result), format = "html")
+```
+
