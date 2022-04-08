@@ -1,0 +1,233 @@
+---
+title: 'Assignment 3: Data set Pathway and Network Analysis'
+author: "Advait Sridhar"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    theme: united
+    toc_depth: 3
+---
+
+
+\tableofcontents
+
+
+# Brief Introduction
+
+The objective of this report is to perform a non-thresholded Gene Set Expression Analysis and visualize the results in a Cytoscape enrichment map. The data being used comes from a  Bulk RNA-seq dataset, which can be found here: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE173940.(Barett et al, 2013) Initial processing, cleaning, and normalization was done using this data, and the normalized data was then used to analyze differential gene expression for the various treatment groups and perform preliminary thresholded over-representation analysis using g:profiler. A ranked set of genes based on differential expression statistics was created, and will be used for the subsequent analyses in this report. 
+
+```{r}
+#Setting Working Directory
+setwd("/home/rstudio/projects")
+getwd()
+```
+
+```{r}
+#Installing and loading the required packages
+if (!requireNamespace("knitr", quietly = TRUE))
+    install.packages("knitr")
+if (!requireNamespace("RCurl", quietly = TRUE))
+    install.packages("RCurl")
+
+library(knitr)
+library(RCurl)
+```
+
+The list of ranked genes was created by assigning a rank to each gene in the expression dataset using the following formula (Isserlin, 2022): 
+
+__Rank = -log10(p-value)  * sign(logFC)__ 
+
+The genes with a positive rank are upregulated genes, while the genes with a negative rank are downregulated. The first few upregulated genes can be seen below.
+
+```{r}
+#Reading the list of ranked genes 
+atm_ranked_genes <- read.table(file=file.path(getwd(), "A3_data", 
+                              "atm_ranked_genes.rnk.txt"),
+                                    header = TRUE,sep = "\t",
+                                    stringsAsFactors = FALSE,
+                                    check.names=FALSE)
+
+kable(atm_ranked_genes[1:5,1:2], type="html")
+```
+
+```{r}
+#Number of genes in ranked list
+nrow(atm_ranked_genes)
+```
+
+There were 14654 genes and their given ranks in this entire list. Using this list, a preliminary over-representation analysis was done with a threshold of p value < 0.05 in the previous report. However, in order to fully analyze the gene set and visualize using a network a non-thresholded GSEA needed to be performed, which was done in the next step.
+
+# Non-thresholded Gene set Enrichment Analysis
+
+A non-thresholded GSEA was performed using the GSEA program from the Broad Institute (Subramanian, 2005). GSEA was run using a ranked list of genes from prior analysis. The background gene set was taken from the Bader Lab (Merico et al, 2010) to visualize pathways and associated annotations, which was downloaded using the script below (Isserlin, 2022). The file downloaded was the latest release (April) and only included pathways with their associated annotations.
+
+```{r}
+#Reading text from source website
+bader_url = "http://download.baderlab.org/EM_Genesets/current_release/Human/symbol/"
+filename = getURL(bader_url)
+tc = textConnection(filename)
+contents = readLines(tc)
+close(tc)
+
+#Searching for file that only includes pathways
+rx = gregexpr("(?<=<a href=\")(.*.GOBP_AllPathways_no_GO_iea.*.)(.gmt)(?=\">)", contents,
+    perl = TRUE)
+bader_file = unlist(regmatches(contents, rx))
+dest_file <- file.path("A3_data", bader_file)
+
+#Downloading file to working directory
+download.file(paste(bader_url, bader_file, sep = ""), destfile = dest_file)
+```
+
+The downloaded gene set was loaded into GSEA along with the list of ranked genes and their associated values. The number of permutations was set at 1000, with No_Collapse for gene symbols. The max size was set at 200 and minimum set at 15 to prevent extremely large sets from entering the analysis and skewing results. 
+
+
+![Figure 1: GSEA Parameters](/home/rstudio/projects/A3_figures/gsea_params.png)
+
+
+
+Running the GSEA produced a report with top hits for both the upregulated genes and the downregulated genes. The positive phenotype in this experiment represented genes that were upregulated in the wild-type U2OS cells in the original experiment while the negative phenotype showed genes downregulated within the treatment groups (ATM-KO, DMSO, and Camptothecin) in both U2OS and HEK293T cells.  The upregulated genes are shown below.
+
+![Table 1: GSEA output for top 10 upregulated genes (top 10)](/home/rstudio/projects/A3_figures/gsea_na_pos.png)
+
+
+
+The top gene set returned for the upregulated genes is 'Cytoplasmic Ribosomal Proteins', which is similar to the top result in the thresholded ORA which is 'Ribosome, cytoplasmic'. However, the rest of the top results in the non-thresholded GSEA had to do with various cellular processes, mainly protein translation and nonsense-mediated decay (NMD). This differs from the rest of the ORA results which primarily dealt with ribosomal proteins as well.
+
+The top result from the GSEA analysis of the positive phenotype (wild-type U2OS cells) shows the significantly expressed genes clustering in the same region, making this result seem the most likely gene set that identifies the function of the upregulated genes as was seen in the ORA as well. The upregulated genes mostly pertain to cytoplasmic ribosomal protein development and function. 
+
+![Figure 2: GSEA output for the top gene set of the positive phenotype](/home/rstudio/projects/A3_figures/gsea_top_pos.png)
+
+
+
+The top downregulated genes are related to tissue development and cellular signaling processes. The top results for downregulated genes seen in the ORA also had to primarily do with various developmental processes, but there wasn't as much of an emphasis on signaling as seen in these pathways. The threshold used in the ORA probably excluded many of the downregulated genes that took part in these processes that subsequently showed up in the non-thresholded GSEA. 
+
+![Table 2: GSEA output for downregulated genes (top 10)](/home/rstudio/projects/A3_figures/gsea_na_neg.png)
+
+
+
+The top result for the negative phenotype (ATM-KO, DMSO, and Camptothecin-treated U2OS and HEK293T cells) showed mostly downregulated genes but with less clustering as seen in the top result of the positive phenotype. There was some overlap with upregulated genes in this result, due to the fact that the number of downregulated genes was far smaller than the upregulated ones potentially due to the fact that there were far fewer wild-type samples compared to treatment groups. 
+
+![Figure 3: GSEA output for the top gene set of the negative phenotype](/home/rstudio/projects/A3_figures/gsea_top_neg.png)
+
+
+
+The genes seen in the gene set still mostly cluster around the downregulated area, suggesting it still is a significant result albeit less significant than the top results of the positive phenotype. These results were then used to create an enrichment map in cytoscape, which will be discussed in the next section.
+
+# Visualizing GSEA through Enrichment Map in Cytoscape
+
+The EnrichmentMap App in Cytoscape was used to create a network of related genesets to visualize their relations and functions (Reimand et al, 2019). The positive and negative enrichment results from the GSEA analysis was taken in the form of their tsv files and were set as the 'Enrichments Pos' and 'Enrichments Neg' parameters. The GMT file was taken from the latest Bader lab genesets for humans as of April 1, 2022, as was used for the GSEA (Merico et al, 2010). The ranks were taken from the original ranked list created after performing differential gene expression analysis. Everything else such as q-value and p-value cutoffs were set as their defaults (0.1 and 1, respectively). All the parameters used can be seen below.
+
+![Figure 4: Parameters set for EM network visualization in cytoscape](/home/rstudio/projects/A3_figures/atm_gsea_em.png)
+
+
+
+The resulting enrichment map showed several clusters of gene sets with their associated labels. The gene sets were mostly coloured red, meaning they were predominantly sets of upregulated genes. There were about 4 major clusters, with one of them having the bulk of the gene sets in a network while the others were more isolated. There were also many small clusters of gene sets and several individual gene sets that didn't fit into any category. Using the 'Analyze Network' tool, I found that there were 218 nodes and 1732 edges that classified the whole enrichment map. The primary results can be seen below. 
+
+![Figure 5: Preliminary Enrichment Map network resulting from the GSEA results and the ranked gene list with pathways taken from Bader lab genesets](/home/rstudio/projects/A3_figures/em_publication_ready_legend.png)
+
+
+
+![Table 3: Summary statistics of the priliminary Enrichment Map](/home/rstudio/projects/A3_figures/analyze_network.png)
+
+
+
+An annotated network was produced using the AutoAnnotate tool in Cytoscape (Kucera et al, 2016). The parameters were set at default, apart from the columns labels which were set to 'GS_DESR' to apply to appropriate geneset descriptions taken from the Bader lab symbols GMT file. The geneset clusters were automatically annotated with characteristic 'themes', which can be seen below. The clusters were reorganized for improved legibility of the annotations.
+
+![Figure 7: AutoAnnotated Enrichment Map using MCL Cluster Annotation](/home/rstudio/projects/A3_figures/em_publication_ready.png)
+
+
+
+As can be seen, there were many themes that had far more interactions between genesets than others. The 'decay complex translation' theme was the most populated, and greatly interacted with genes in themes that related with mitosis, trna methylation, and rrna translation. Most of these genes were upregulated, with many of the downregulated genes being in themes that had to do with antigen presentation and subcellular signalling, without many interactions. Some of the other themes with numerous upregulated genesets also had to do with cellular machinery and transcription/translation processes, showing how the treatment groups perhaps had a large impact on these factors within the cell. A summary table of these results can be seen below.
+
+![Table 4: MCL Cluster Annotations taken from Bader lab pathways file that contained the most nodes (genesets)](/home/rstudio/projects/A3_figures/annotation_clusters_final.png)
+
+
+
+The thematic network was then collapsed to show the main components of the network. As can be seen, the connections all center around the original cluster named 'decay complex translation'. This pathway will be the focus of the interpretation in the next section. 
+
+![Figure 8: Collapsed version of Enrichment Map showing primary cluster and its connections](/home/rstudio/projects/A3_figures/em_collapsed_final.png)
+
+
+
+# Interpretation 
+
+The original paper hypothesized that the knockout of ATM kinase would lead to protein aggregation, as this kinase is essential in the DNA damage response (Huiting et al, 2021). We see this reflected in the themes associated with the upregulated genes through our network analysis. The top theme, 'decay complex translation', refers to the concept of NSD (non-stop decay) which is a cellular mechanism through which mRNA that do not contain a stop codon are eradicated in order to prevent protein aggregation (Venkataraman, 2014). This geneset being upregulated in the wild-type cells is consistent with the researchers' findings. 
+
+Other themes in the annotated network also have to do with trna and rrna regulation, which is important for protein synthesis. For example, the 'tricistronic rrna transcript' pathway is important for the maturation of pre-rRNA molecules in mature SSU-rRNA (small subunit) and LSU-rRNA (large subunit). Upregulation of these pathways leads to protein aggregation (EMBL-EBI, 2013), which must be a result of the ATM-KO and DMSO/Camptothecin subunits (Huiting et al, 2021). 
+
+The downregulation in signaling and developmental pathways is something novel that wasn't mentioned by the researchers to any significant extent. Similar pathways were seen in the ORA analysis, and were not as prevalent as the upregulated pathways. A potential explanation for this is that the signaling pathways that are typically activated by ATM and associated kinases to initiate a response to DNA damage are disrupted when it is knocked out, leading the downregulation of these pathways (Stracker et al, 2013). This damaged signaling network may cause apoptosis in several essential tissues, thereby hindering developmental pathways as well (Stracker et al, 2013). So although protein aggregation is highly prevalent due to the lack of cell-cycle regulation by ATM and TOP1 in the treatment groups, certain aspects of cellular machinery are inhibited as a result and the associated genes are downregulated.
+
+The loss of ATM kinase due to the knockout experiment and the disruption of topoisomerase function through poisoning with Camptothecin and DMSO results in the overexpression of genes involved in protein translation due to a lack of DNA damage repair. This leads to widespread protein aggregation and potential tumorigenesis (Huiting et al, 2021). The medical implications for this are severe, and has been demonstrated to already be associated with neurodegenerative diseases like Huntington's and Alzheimer's and cancers due to unregulated cell cycles (Huiting et al, 2013). The enrichment map and associated analyses produced in this paper contribute to visualizing the genotoxic effects of these treatments investigated by the researchers, and may serve the purpose of understanding potential ways to intercept this process to recover several essential cell functions to avoid extensive protein aggregation.
+
+# Post Analysis of Transcription Factors
+
+A post-analysis was done using Bader lab genesets for transcription factors (Isserlin, 2022). Transcription factors are a relevant post-analysis to do for this study due to its emphasis on ATM checkpoint kinase and how its absence can cause excessive protein aggregation due to DNA damage, which can impact the function of transcription factors as well that act on DNA. The file was downloaded directly from the Bader lab genesets website, which can be found here: http://download.baderlab.org/EM_Genesets/current_release/Human/symbol/TranscriptionFactors/Human_TranscriptionFactors_MSigdb_April_01_2022_symbol.gmt (Merico et al, 2010). The file was loaded through the signature gene set section of enrichment map in Cytoscape (Reimand et al, 2019), and a Mann-Whitney two-sided test was performed to determine significant transcription factors for genesets in the enrichment map. The cutoff was changed from 0.05 to 0 due to an immense amount of transcription factors that were being mapped onto the network, and only the most significant ones were kept for visualization. The resulting list of TFs can be seen below.
+
+![Figure 9: Post-Analysis Signature Gene Sets page with significant transcription factors](/home/rstudio/projects/A3_figures/atm_ko_post_final.png)
+
+
+
+The resulting transcription factors were then added to the network, which was reorganized for clear visualization. The 3 most significantly matched transcription factors (SNRNP70, ZFHX3, TAF9B) can be seen below. 
+
+![Figure 10: Post-Analysis Enrichment Map containing transcription factors and their connections to relevant genesets](/home/rstudio/projects/A3_figures/atm_post_analysis.png)
+
+
+
+![Figure 11: A close-up of the SNRNP70 transcription factor within the Enrichment Map](/home/rstudio/projects/A3_figures/snrnp70.png)
+
+
+
+![Figure 12: A close-up of the ZFHX3 transcription factor within the Enrichment Map](/home/rstudio/projects/A3_figures/zfhx3.png)
+
+
+
+![Figure 13: A close-up of the TAF9B transcription factor within the Enrichment Map](/home/rstudio/projects/A3_figures/taf9b.png)
+
+
+
+All 3 transcription factors mainly interact with with the 'decay complex translation' cluster, which has to do with NSD, which is how mRNAs that don't express a stop codon are eradicated (Venkataraman et al, 2014). Upon closer inspection into the function of each transcription factor, we can see how it is relevant to the outcomes of this experiment. SNRNP70 is a gene that encodes a protein that associates with small nuclear RNA (snRNA) that is used to splice pre-mRNA (Spritz et al, 1987). It's overexpression has been associated with the development of amyloid plaques in the brain that cause ALS and Alzheimer's, among other diseases (Nakaya, 2022). ZFHX3 is a gene involved in hormonal signalling and prostate tumor suppression, but can cause the proliferation of other cancer subtypes like liver and breast cancer when upregulated (Dong et al, 2020). TAF9B is involved in the initiation of transcription by RNA Polymerase II (Frontini et al, 2005). It's connection with this batch of upregulated genesets shows how the damage of ATM kinase may impact cell cycle repair and lead to the increased production of mRNAs without stop codons due to unregulated transcription initiation by this factor. 
+
+These characteristics of transcription factors further supports the claim made by the researchers that ATM checkpoint kinase is involved in cell cycle regulation and apoptosis to control protein expression, and in its absence we tend to have protein accumulation that leads to degenerative diseases like Alzheimer's and the proliferation of some cancers (Huiting et al, 2021). The upregulation of genesets involving the translation process and the downregulation of signaling and development pathways done through systems bioinformatics analyses in this report concludes the same.
+
+
+
+# Citations
+
+Barrett T, Wilhite SE, Ledoux P, Evangelista C, Kim IF, Tomashevsky M, Marshall KA, Phillippy KH, Sherman PM, Holko M, Yefanov A, Lee H, Zhang N, Robertson CL, Serova N, Davis S, Soboleva A.(2013).
+NCBI GEO: archive for functional genomics data sets--update.
+Nucleic Acids Res. 41(Database issue):D991-5.
+
+Dong, G., Ma, G., Wu, R., Liu, J., Liu, M., Gao, A., Li, X., A, J., Liu, X., Zhang, Z., Zhang, B., Fu, L., &amp; Dong, J.-T. (2020). ZFHX3 promotes the proliferation and tumor growth of ER-positive breast cancer cells likely by enhancing stem-like features and MYC and TBX3 transcription. Cancers, 12(11), 3415. https://doi.org/10.3390/cancers12113415 
+
+EMBL-EBI. (2013). Gene ontology and go annotations. QuickGO. Retrieved April 7, 2022, from https://www.ebi.ac.uk/QuickGO/term/GO:0000462 
+
+Frontini, M., Soutoglou, E., Argentini, M., Bole-Feysot, C., Jost, B., Scheer, E., &amp; Tora Làszlò. (2005). TAF9b (formerly TAF9L) is a bona fide taf that has unique and overlapping roles with TAF9. Molecular and Cellular Biology, 25(11), 4638–4649. https://doi.org/10.1128/mcb.25.11.4638-4649.2005 
+
+Huiting, W., Dekker, S. L., Joris C. J. van der Lienden, Mergener, R., Furtado, G. V., Gerrits, E., Musskopf, M. K., Oghbaie, M., Stefano, L. H. D., Waarde-Verhagen, M. A. W. H. van, Couzijn, S., Barazzuol, L., LaCava, J., Kampinga, H. H., & Bergink, S. (2021, January 1). Targeting DNA topoisomerases or checkpoint kinases results in an overload of chaperone systems, triggering aggregation of a metastable subproteome. bioRxiv. Retrieved February 18, 2022, from https://www.biorxiv.org/content/10.1101/2021.06.04.447142v1
+
+Isserlin, R. (2022). Recap and GSEA. Retrieved April 7, 2022, from https://q.utoronto.ca/courses/248455/files/19913542?module_item_id=3542022&fd_cookie_set=1
+
+Isserlin, R. (2022). Cytoscape101. Retrieved April 7, 2022, from https://q.utoronto.ca/courses/248455/files/18120903?module_item_id=3210910
+
+Isserlin, R. (2022). Enrichment Map and other Cytoscape Apps. Retrieved April 7, 2022, from https://q.utoronto.ca/courses/248455/files/18120900?module_item_id=3210911
+
+Isserlin, R. (2022). Post Analysis. Retrieved April 7, 2022, from https://q.utoronto.ca/courses/248455/files/20207314?module_item_id=3574594
+
+Kucera, M., Isserlin, R., Arkhangorodsky, A., &amp; Bader, G. D. (2016). AutoAnnotate: A Cytoscape app for summarizing networks with Semantic Annotations. F1000Research, 5, 1717. https://doi.org/10.12688/f1000research.9090.1 
+
+Merico, D., Isserlin, R., Stueker, O., Emili, A., &amp; Bader, G. D. (2010). Enrichment map: A network-based method for gene-set enrichment visualization and interpretation. PLoS ONE, 5(11). https://doi.org/10.1371/journal.pone.0013984 
+
+Reimand, J., Isserlin, R., Voisin, V., Kucera, M., Tannus-Lopes, C., Rostamianfar, A., Wadi, L., Meyer, M., Wong, J., Xu, C., Merico, D., &amp; Bader, G. D. (2019). Pathway enrichment analysis and visualization of OMICS data using G:Profiler, GSEA, Cytoscape and EnrichmentMap. Nature Protocols, 14(2), 482–517. https://doi.org/10.1038/s41596-018-0103-9 
+
+Spritz, R. A., Strunk, K., Surowy, C. S., Hoch, S. O., Barton, D. E., &amp; Francke, U. (1987). The human U1-70K snrnp protein: Cdna cloning, chromosomal localization, expression, alternative splicing and RNA-binding. Nucleic Acids Research, 15(24), 10373–10391. https://doi.org/10.1093/nar/15.24.10373 
+
+Subramanian, A., Tamayo, P., Mootha, V. K., Mukherjee, S., Ebert, B. L., Gillette, M. A., Paulovich, A., Pomeroy, S. L., Golub, T. R., Lander, E. S., & Mesirov, J. P. (2005). Gene set enrichment analysis: A knowledge-based approach for interpreting genome-wide expression profiles. Proceedings of the National Academy of Sciences, 102(43), 15545–15550. https://doi.org/10.1073/pnas.0506580102
+
+Venkataraman, K., Guja, K. E., Garcia-Diaz, M., &amp; Karzai, A. W. (2014). Non-stop mrna decay: A special attribute of trans-translation mediated ribosome rescue. Frontiers in Microbiology, 5. https://doi.org/10.3389/fmicb.2014.00093
+
+Xie Y (2021). knitr: A General-Purpose Package for Dynamic Report Generation in R. R package version 1.37, https://yihui.org/knitr/.
+
+
